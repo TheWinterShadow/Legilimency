@@ -25,7 +25,7 @@ jobs:
     environment: production  # Requires environment approval if configured
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install jq
         run: sudo apt-get install -y jq
