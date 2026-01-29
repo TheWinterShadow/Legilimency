@@ -1,0 +1,154 @@
+# Deploy Dashboards Workflow
+# Automatically deploys dashboards to Grafana Cloud when changed
+
+name: Deploy Dashboards
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboards/**'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      dashboard:
+        description: 'Specific dashboard to deploy (leave empty for all)'
+        required: false
+        type: string
+
+env:
+  GRAFANA_FOLDER_NAME: "Homelab Monitoring"
+
+jobs:
+  deploy:
+    name: Deploy to Grafana Cloud
+    runs-on: ubuntu-latest
+    environment: production  # Requires environment approval if configured
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Verify Grafana Cloud credentials
+        env:
+          GRAFANA_CLOUD_URL: ${{ secrets.GRAFANA_CLOUD_URL }}
+          GRAFANA_CLOUD_API_TOKEN: ${{ secrets.GRAFANA_CLOUD_API_TOKEN }}
+        run: |
+          if [ -z "$GRAFANA_CLOUD_URL" ] || [ -z "$GRAFANA_CLOUD_API_TOKEN" ]; then
+            echo "Error: Grafana Cloud credentials not configured"
+            echo "Please add GRAFANA_CLOUD_URL and GRAFANA_CLOUD_API_TOKEN to repository secrets"
+            exit 1
+          fi
+
+          # Test API connection
+          response=$(curl -s -w "%{http_code}" -o /tmp/health.json \
+            "${GRAFANA_CLOUD_URL}/api/health" \
+            -H "Authorization: Bearer ${GRAFANA_CLOUD_API_TOKEN}")
+
+          if [ "$response" != "200" ]; then
+            echo "Error: Cannot connect to Grafana Cloud (HTTP $response)"
+            cat /tmp/health.json
+            exit 1
+          fi
+
+          echo "Successfully connected to Grafana Cloud"
+
+      - name: Create or get folder
+        id: folder
+        env:
+          GRAFANA_CLOUD_URL: ${{ secrets.GRAFANA_CLOUD_URL }}
+          GRAFANA_CLOUD_API_TOKEN: ${{ secrets.GRAFANA_CLOUD_API_TOKEN }}
+        run: |
+          # Check if folder exists
+          folder_id=$(curl -s \
+            "${GRAFANA_CLOUD_URL}/api/folders" \
+            -H "Authorization: Bearer ${GRAFANA_CLOUD_API_TOKEN}" | \
+            jq -r ".[] | select(.title==\"${GRAFANA_FOLDER_NAME}\") | .id")
+
+          if [ -z "$folder_id" ] || [ "$folder_id" = "null" ]; then
+            echo "Creating folder: ${GRAFANA_FOLDER_NAME}"
+            folder_response=$(curl -s -X POST \
+              "${GRAFANA_CLOUD_URL}/api/folders" \
+              -H "Authorization: Bearer ${GRAFANA_CLOUD_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"title\": \"${GRAFANA_FOLDER_NAME}\"}")
+
+            folder_id=$(echo "$folder_response" | jq -r '.id')
+
+            if [ -z "$folder_id" ] || [ "$folder_id" = "null" ]; then
+              echo "Error creating folder: $folder_response"
+              exit 1
+            fi
+          fi
+
+          echo "Using folder ID: $folder_id"
+          echo "folder_id=$folder_id" >> $GITHUB_OUTPUT
+
+      - name: Deploy dashboards
+        env:
+          GRAFANA_CLOUD_URL: ${{ secrets.GRAFANA_CLOUD_URL }}
+          GRAFANA_CLOUD_API_TOKEN: ${{ secrets.GRAFANA_CLOUD_API_TOKEN }}
+          FOLDER_ID: ${{ steps.folder.outputs.folder_id }}
+          SPECIFIC_DASHBOARD: ${{ github.event.inputs.dashboard }}
+        run: |
+          deployed=0
+          failed=0
+
+          for dashboard_file in dashboards/*.json; do
+            filename=$(basename "$dashboard_file")
+
+            # Skip if specific dashboard requested and this isn't it
+            if [ -n "$SPECIFIC_DASHBOARD" ] && [ "$filename" != "$SPECIFIC_DASHBOARD" ]; then
+              continue
+            fi
+
+            echo "Deploying: $filename"
+
+            # Wrap dashboard in required structure
+            payload=$(jq -n \
+              --argjson folderId "$FOLDER_ID" \
+              --slurpfile dashboard "$dashboard_file" \
+              '{dashboard: $dashboard[0], folderId: $folderId, overwrite: true}')
+
+            response=$(curl -s -w "\n%{http_code}" \
+              -X POST "${GRAFANA_CLOUD_URL}/api/dashboards/db" \
+              -H "Authorization: Bearer ${GRAFANA_CLOUD_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$payload")
+
+            http_code=$(echo "$response" | tail -1)
+            body=$(echo "$response" | head -n -1)
+
+            if [ "$http_code" = "200" ]; then
+              dashboard_url=$(echo "$body" | jq -r '.url // "unknown"')
+              echo "  Success: ${GRAFANA_CLOUD_URL}${dashboard_url}"
+              deployed=$((deployed + 1))
+            else
+              echo "  Failed (HTTP $http_code): $body"
+              failed=$((failed + 1))
+            fi
+          done
+
+          echo ""
+          echo "Deployment Summary:"
+          echo "  Deployed: $deployed"
+          echo "  Failed: $failed"
+
+          if [ $failed -gt 0 ]; then
+            exit 1
+          fi
+
+      - name: Post deployment summary
+        if: always()
+        run: |
+          echo "## Dashboard Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Folder: **${GRAFANA_FOLDER_NAME}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Dashboard | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          for f in dashboards/*.json; do
+            name=$(basename "$f" .json)
+            echo "| $name | Deployed |" >> $GITHUB_STEP_SUMMARY
+          done

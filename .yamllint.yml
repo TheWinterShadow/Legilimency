@@ -1,0 +1,69 @@
+# yamllint configuration
+# Documentation: https://yamllint.readthedocs.io/
+
+extends: relaxed
+
+rules:
+  # Line length - allow longer lines for URLs and commands
+  line-length:
+    max: 200
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # Indentation - 2 spaces standard
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+
+  # Truthy values - allow various boolean representations
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
+    check-keys: false
+
+  # Comments - require space after #
+  comments:
+    require-starting-space: true
+    ignore-shebangs: true
+    min-spaces-from-content: 1
+
+  # Braces - allow inline braces
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+  # Brackets - allow inline brackets
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+  # Colons - standard spacing
+  colons:
+    max-spaces-before: 0
+    max-spaces-after: 1
+
+  # Document markers (---, ...) - not required
+  document-start: disable
+  document-end: disable
+
+  # Empty lines
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1
+
+  # Key duplicates - prevent duplicate keys
+  key-duplicates: enable
+
+  # New line at end of file
+  new-line-at-end-of-file: enable
+
+  # Trailing spaces - not allowed
+  trailing-spaces: enable
+
+# Ignore specific files/directories
+ignore: |
+  .git/
+  node_modules/
+  venv/
+  .venv/

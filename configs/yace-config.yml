@@ -1,0 +1,246 @@
+# YACE (Yet Another CloudWatch Exporter) Configuration
+# API Version: v1alpha1
+#
+# This configuration discovers AWS resources via tags and exports CloudWatch metrics
+# in Prometheus format. Resources are auto-discovered, so no hardcoding needed.
+
+apiVersion: v1alpha1
+
+# Discovery configuration: How to find AWS resources
+discovery:
+  # Export resource tags as metric labels
+  # This allows filtering and grouping in Grafana dashboards
+  exportedTagsOnMetrics:
+    AWS/Lambda:
+      - Name          # Lambda function name
+      - Environment   # Environment tag (dev/staging/prod)
+      - Project       # Project tag for grouping
+    AWS/SQS:
+      - QueueName     # SQS queue name
+      - Environment
+      - Project
+    AWS/ECS:
+      - ClusterName   # ECS cluster name
+      - ServiceName   # ECS service name
+      - Environment
+      - Project
+    AWS/ApiGateway:
+      - ApiName       # API Gateway name
+      - Stage         # API stage
+      - Environment
+      - Project
+    AWS/DynamoDB:
+      - TableName     # DynamoDB table name
+      - Environment
+      - Project
+
+# Jobs: Define which metrics to collect from which AWS services
+jobs:
+  # AWS Lambda Monitoring
+  # Collects invocation, error, duration, and concurrency metrics
+  - type: AWS/Lambda
+    regions:
+      - ${AWS_REGIONS_TO_MONITOR}  # Use environment variable for flexibility
+    metrics:
+      # Invocations: Total number of function invocations
+      - name: Invocations
+        statistics:
+          - Sum        # Total invocations
+        period: 300    # 5-minute periods (matches CloudWatch standard metrics)
+        length: 600    # Look back 10 minutes
+
+      # Errors: Number of failed invocations
+      - name: Errors
+        statistics:
+          - Sum        # Total errors
+        period: 300
+        length: 600
+
+      # Duration: Function execution time
+      - name: Duration
+        statistics:
+          - Average    # Average duration
+          - Maximum    # Max duration (for cold starts)
+        period: 300
+        length: 600
+
+      # Concurrent Executions: Current concurrent invocations
+      - name: ConcurrentExecutions
+        statistics:
+          - Maximum    # Peak concurrency
+          - Average    # Average concurrency
+        period: 300
+        length: 600
+
+      # Throttles: Number of throttled invocations (hitting concurrency limit)
+      - name: Throttles
+        statistics:
+          - Sum        # Total throttles
+        period: 300
+        length: 600
+
+      # DeadLetterErrors: Messages sent to DLQ
+      - name: DeadLetterErrors
+        statistics:
+          - Sum        # Total DLQ errors
+        period: 300
+        length: 600
+
+      # ProvisionedConcurrencyUtilization: For provisioned concurrency functions
+      - name: ProvisionedConcurrencyUtilization
+        statistics:
+          - Average
+        period: 300
+        length: 600
+
+  # AWS SQS Monitoring
+  # Collects queue depth, message age, and throughput metrics
+  - type: AWS/SQS
+    regions:
+      - ${AWS_REGIONS_TO_MONITOR}
+    metrics:
+      # ApproximateNumberOfMessagesVisible: Current queue depth
+      - name: ApproximateNumberOfMessagesVisible
+        statistics:
+          - Average    # Average queue depth
+          - Maximum    # Peak queue depth
+        period: 300
+        length: 600
+
+      # ApproximateAgeOfOldestMessage: Age of oldest message in seconds
+      - name: ApproximateAgeOfOldestMessage
+        statistics:
+          - Maximum    # Oldest message age
+          - Average    # Average message age
+        period: 300
+        length: 600
+
+      # NumberOfMessagesSent: Messages added to queue
+      - name: NumberOfMessagesSent
+        statistics:
+          - Sum        # Total messages sent
+        period: 300
+        length: 600
+
+      # NumberOfMessagesReceived: Messages consumed from queue
+      - name: NumberOfMessagesReceived
+        statistics:
+          - Sum        # Total messages received
+        period: 300
+        length: 600
+
+      # NumberOfMessagesDeleted: Messages successfully processed
+      - name: NumberOfMessagesDeleted
+        statistics:
+          - Sum        # Total messages deleted
+        period: 300
+        length: 600
+
+      # NumberOfEmptyReceives: Empty receives (indicates over-provisioned consumers)
+      - name: NumberOfEmptyReceives
+        statistics:
+          - Sum
+        period: 300
+        length: 600
+
+  # AWS ECS Monitoring
+  # Collects CPU, memory, and task count metrics for ECS services
+  - type: AWS/ECS
+    regions:
+      - ${AWS_REGIONS_TO_MONITOR}
+    metrics:
+      # CPUUtilization: CPU usage percentage
+      - name: CPUUtilization
+        statistics:
+          - Average    # Average CPU usage
+          - Maximum    # Peak CPU usage
+        period: 300
+        length: 600
+
+      # MemoryUtilization: Memory usage percentage
+      - name: MemoryUtilization
+        statistics:
+          - Average    # Average memory usage
+          - Maximum    # Peak memory usage
+        period: 300
+        length: 600
+
+      # CPUReservation: Reserved CPU units
+      - name: CPUReservation
+        statistics:
+          - Average
+        period: 300
+        length: 600
+
+      # MemoryReservation: Reserved memory
+      - name: MemoryReservation
+        statistics:
+          - Average
+        period: 300
+        length: 600
+
+  # AWS API Gateway Monitoring
+  # Collects request count, errors, and latency metrics
+  - type: AWS/ApiGateway
+    regions:
+      - ${AWS_REGIONS_TO_MONITOR}
+    metrics:
+      # Count: Total API requests
+      - name: Count
+        statistics:
+          - Sum        # Total requests
+        period: 300
+        length: 600
+
+      # 4XXError: Client errors (4xx status codes)
+      - name: 4XXError
+        statistics:
+          - Sum        # Total 4xx errors
+        period: 300
+        length: 600
+
+      # 5XXError: Server errors (5xx status codes)
+      - name: 5XXError
+        statistics:
+          - Sum        # Total 5xx errors
+        period: 300
+        length: 600
+
+      # Latency: Request latency in milliseconds
+      - name: Latency
+        statistics:
+          - Average    # Average latency
+          - Maximum    # Max latency
+        period: 300
+        length: 600
+
+  # AWS DynamoDB Monitoring (Optional)
+  # Uncomment if you use DynamoDB tables
+  # - type: AWS/DynamoDB
+  #   regions:
+  #     - ${AWS_REGIONS_TO_MONITOR}
+  #   metrics:
+  #     # ConsumedReadCapacityUnits: Read capacity consumed
+  #     - name: ConsumedReadCapacityUnits
+  #       statistics:
+  #         - Sum
+  #       period: 300
+  #       length: 600
+  #     # ConsumedWriteCapacityUnits: Write capacity consumed
+  #     - name: ConsumedWriteCapacityUnits
+  #       statistics:
+  #         - Sum
+  #       period: 300
+  #       length: 600
+  #     # ThrottledRequests: Throttled requests
+  #     - name: ThrottledRequests
+  #       statistics:
+  #         - Sum
+  #       period: 300
+  #       length: 600
+
+# Fargate: Enable ECS Fargate support
+fargate: true
+
+# Debug: Set to true for verbose logging (disable in production)
+debug: false

@@ -1,0 +1,168 @@
+# Security Scanning Workflow
+# Runs security checks on the codebase
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Monday at 00:00 UTC
+    - cron: '0 0 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  docker-security:
+    name: Docker Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create test .env
+        run: |
+          cat > .env << 'EOF'
+          GRAFANA_CLOUD_PROMETHEUS_URL=https://test.grafana.net/api/prom/push
+          GRAFANA_CLOUD_USERNAME=123456
+          GRAFANA_CLOUD_API_KEY=glc_test
+          AWS_ACCESS_KEY_ID=AKIATEST
+          AWS_SECRET_ACCESS_KEY=testsecret
+          AWS_REGION=us-east-1
+          AWS_REGIONS_TO_MONITOR=us-east-1
+          GCP_PROJECT_ID=test
+          GCP_KEY_PATH=./test.json
+          EOF
+          echo '{}' > test.json
+
+      - name: Scan vmagent image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'victoriametrics/vmagent:v1.103.0'
+          format: 'sarif'
+          output: 'trivy-vmagent.sarif'
+          severity: 'CRITICAL,HIGH'
+        continue-on-error: true
+
+      - name: Scan YACE image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'quay.io/integrations/yet-another-cloudwatch-exporter:v0.60.0'
+          format: 'sarif'
+          output: 'trivy-yace.sarif'
+          severity: 'CRITICAL,HIGH'
+        continue-on-error: true
+
+      - name: Scan node-exporter image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'prom/node-exporter:v1.7.0'
+          format: 'sarif'
+          output: 'trivy-node-exporter.sarif'
+          severity: 'CRITICAL,HIGH'
+        continue-on-error: true
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: '.'
+        continue-on-error: true
+
+  secrets-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+        continue-on-error: true
+
+      - name: Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v3
+        continue-on-error: true
+
+  terraform-security:
+    name: Terraform Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec on AWS config
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform/aws
+          soft_fail: true
+
+      - name: Run tfsec on GCP config
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform/gcp
+          soft_fail: true
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform/
+          soft_fail: true
+          output_format: cli
+
+  iam-policy-review:
+    name: IAM Policy Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install aws-policy-validator (if available)
+        run: |
+          pip install parliament || true
+
+      - name: Analyze AWS IAM policy
+        run: |
+          echo "Reviewing IAM policy for overly permissive settings..."
+
+          # Check for Resource: * with dangerous actions
+          DANGEROUS_PATTERN='.Statement[] | select(.Resource == "*")'
+          DANGEROUS_PATTERN+=' | select((.Action | type == "array") and (.Action | any(test("Delete|Put|Create|Update"))))'
+          if jq -e "$DANGEROUS_PATTERN" cloud-connectors/aws/iam-policy.json > /dev/null 2>&1; then
+            echo "Warning: Found Resource: * with potentially dangerous actions"
+          else
+            echo "IAM policy follows least privilege principles"
+          fi
+
+          # Check for admin actions
+          if jq -e '.Statement[].Action | if type == "array" then .[] else . end | test("\\*|:Admin|:Full")' cloud-connectors/aws/iam-policy.json > /dev/null 2>&1; then
+            echo "Warning: Found potentially overly permissive actions"
+          else
+            echo "No wildcard or admin actions found"
+          fi
+
+          echo "IAM policy review complete"

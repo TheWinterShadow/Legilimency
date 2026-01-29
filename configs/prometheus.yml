@@ -1,0 +1,140 @@
+# Prometheus scrape configuration for vmagent
+# This file configures vmagent to scrape all exporters and push metrics to Grafana Cloud
+
+global:
+  # Default scrape interval: 60 seconds
+  # Balance between freshness and API call costs
+  scrape_interval: 60s
+
+  # Scrape timeout: 50 seconds (less than scrape interval)
+  scrape_timeout: 50s
+
+  # Evaluation interval for recording rules (not used in this setup)
+  evaluation_interval: 60s
+
+  # External labels applied to all metrics
+  # These help identify the source in Grafana Cloud
+  external_labels:
+    cluster: 'homelab'
+    environment: 'production'
+    source: 'raspberry-pi'
+
+# Scrape configurations for each exporter
+scrape_configs:
+  # Self-monitoring: vmagent metrics
+  # Monitor vmagent's own health and performance
+  - job_name: 'vmagent'
+    static_configs:
+      - targets: ['localhost:8429']
+        labels:
+          exporter: 'vmagent'
+          component: 'scraper'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metric_relabel_configs:
+      # Keep only essential vmagent metrics to reduce series count
+      - source_labels: [__name__]
+        regex: 'vmagent_(remote_write|scrape|updates|.*_errors|.*_samples).*'
+        action: keep
+
+  # AWS CloudWatch via YACE
+  # Scrape at 5-minute intervals to match CloudWatch standard metrics granularity
+  # This reduces API calls and costs while maintaining useful resolution
+  - job_name: 'aws-cloudwatch'
+    static_configs:
+      - targets: ['yace:5000']
+        labels:
+          exporter: 'yace'
+          cloud: 'aws'
+          component: 'cloudwatch'
+    scrape_interval: 300s  # 5 minutes - matches CloudWatch standard metrics
+    scrape_timeout: 60s
+    metric_relabel_configs:
+      # Add helpful labels from AWS resource tags
+      - source_labels: [tag_Name]
+        target_label: resource_name
+        regex: '(.+)'
+      - source_labels: [tag_Environment]
+        target_label: environment
+        regex: '(.+)'
+      # Drop high-cardinality metrics to stay under Grafana Cloud 10k series limit
+      # Keep only aggregated statistics (Average, Sum, Maximum)
+      - source_labels: [__name__]
+        regex: 'aws_.*_(sample_count|minimum|.*_count)$'
+        action: drop
+      # Rename metrics to be more Prometheus-friendly
+      - source_labels: [__name__]
+        regex: 'aws_(.*)_(average|sum|maximum)'
+        target_label: __name__
+        replacement: 'aws_${1}_${2}'
+
+  # GCP Cloud Monitoring via Stackdriver Exporter
+  # Scrape at 1-minute intervals for more granular GCP metrics
+  - job_name: 'gcp-monitoring'
+    static_configs:
+      - targets: ['stackdriver-exporter:9255']
+        labels:
+          exporter: 'stackdriver-exporter'
+          cloud: 'gcp'
+          component: 'monitoring'
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    metric_relabel_configs:
+      # Add GCP project as label
+      - source_labels: [project_id]
+        target_label: gcp_project
+      # Drop high-cardinality metrics
+      - source_labels: [__name__]
+        regex: 'stackdriver_.*_(count|bucket_count|.*_distribution)$'
+        action: drop
+      # Keep only essential GCP metrics
+      - source_labels: [__name__]
+        regex: 'stackdriver_(compute|run|pubsub|cloudfunctions).*'
+        action: keep
+
+  # Node Exporter: Raspberry Pi system metrics
+  # Monitor CPU, memory, disk, network on the Pi itself
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          exporter: 'node-exporter'
+          component: 'system'
+          instance: 'raspberry-pi'
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    metric_relabel_configs:
+      # Drop unnecessary filesystem metrics to reduce series count
+      - source_labels: [__name__, mountpoint]
+        regex: 'node_filesystem_.*;(/boot|/proc|/sys|/dev|/run).*'
+        action: drop
+      # Keep only essential system metrics
+      - source_labels: [__name__]
+        regex: 'node_(cpu|memory|disk|network|load|uptime).*'
+        action: keep
+
+  # cAdvisor: Docker container metrics
+  # Monitor all containers running on the Raspberry Pi
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8081']
+        labels:
+          exporter: 'cadvisor'
+          component: 'containers'
+          instance: 'raspberry-pi'
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    metric_relabel_configs:
+      # Add container name as label for easier filtering
+      - source_labels: [container_label_com_docker_compose_service]
+        target_label: docker_service
+        regex: '(.+)'
+      # Drop high-cardinality per-container metrics if too many containers
+      # Keep aggregated metrics
+      - source_labels: [__name__]
+        regex: 'container_(cpu|memory|network|fs).*'
+        action: keep
+      # Drop metrics for stopped containers
+      - source_labels: [container_label_com_docker_compose_service]
+        regex: ''
+        action: drop

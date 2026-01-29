@@ -1,0 +1,121 @@
+# Pre-commit configuration
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+# Documentation: https://pre-commit.com/
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--unsafe]
+        exclude: ^(configs/alerts/|\.github/)
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+        exclude: ^(\.github/workflows/|docs/|cloud-connectors/)
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.6
+    hooks:
+      - id: shellcheck
+        args: [-x, --severity=warning]
+        files: \.(sh|bash)$
+
+  # Dockerfile linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        entry: hadolint --ignore DL3008 --ignore DL3013
+
+  # Terraform formatting and validation
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.86.0
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
+        args:
+          - --hook-config=--retry-once-with-cleanup=true
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.33.0
+    hooks:
+      - id: yamllint
+        args: [-c, .yamllint.yml]
+        exclude: ^(configs/alerts/)
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.39.0
+    hooks:
+      - id: markdownlint
+        args: [--config, .markdownlint.yml, --fix]
+
+  # Security scanning for secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            \.env\.example$|
+            \.github/workflows/.*\.yml$|
+            docs/.*\.md$|
+            cloud-connectors/.*/.*\.md$|
+            scripts/.*\.sh$|
+            tests/.*\.sh$
+          )$
+
+  # Local hooks for project-specific validation
+  - repo: local
+    hooks:
+      - id: validate-docker-compose
+        name: Validate Docker Compose
+        entry: ./scripts/pre-commit-docker-compose.sh
+        language: script
+        files: docker-compose\.yml$
+        pass_filenames: false
+
+      - id: validate-dashboards
+        name: Validate Grafana Dashboards
+        entry: bash -c 'for f in dashboards/*.json; do python3 -m json.tool "$f" > /dev/null || exit 1; done'
+        language: system
+        files: ^dashboards/.*\.json$
+        pass_filenames: false
+
+      - id: validate-iam-policy
+        name: Validate AWS IAM Policy
+        entry: python3 -m json.tool
+        language: system
+        files: ^cloud-connectors/aws/iam-policy\.json$
+
+      - id: check-env-example
+        name: Check .env.example has no real secrets
+        entry: ./scripts/pre-commit-check-env.sh
+        language: script
+        files: \.env\.example$
+        pass_filenames: false
+
+# CI configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: [terraform_validate, validate-docker-compose]
+  submodules: false

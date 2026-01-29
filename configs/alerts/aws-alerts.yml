@@ -1,0 +1,196 @@
+# AWS Alert Rules for Grafana Cloud
+# These alerts monitor AWS Lambda, SQS, ECS, and API Gateway services
+#
+# To use these alerts in Grafana Cloud:
+# 1. Go to Grafana Cloud → Alerting → Alert rules
+# 2. Create new alert rule group
+# 3. Copy the rules below into the alert rule configuration
+# 4. Set up notification channels (Slack, email, etc.)
+
+groups:
+  - name: aws_lambda_alerts
+    interval: 60s
+    rules:
+      # Alert when Lambda function error rate exceeds 5%
+      - alert: LambdaHighErrorRate
+        expr: |
+          (
+            sum(rate(aws_lambda_errors_sum[5m])) by (function_name)
+            /
+            sum(rate(aws_lambda_invocations_sum[5m])) by (function_name)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: lambda
+          cloud: aws
+        annotations:
+          summary: "High error rate on Lambda function {{ $labels.function_name }}"
+          description: |
+            Lambda function {{ $labels.function_name }} has {{ $value | humanizePercentage }} error rate.
+            This exceeds the 5% threshold for 5 minutes.
+          runbook_url: "https://docs.aws.amazon.com/lambda/latest/dg/monitoring-functions.html"
+
+      # Alert when Lambda approaches concurrency limit (80% of 1000)
+      - alert: LambdaConcurrencyLimit
+        expr: |
+          aws_lambda_concurrent_executions_maximum > 800
+        for: 5m
+        labels:
+          severity: warning
+          component: lambda
+          cloud: aws
+        annotations:
+          summary: "Lambda approaching concurrency limit"
+          description: |
+            Lambda has {{ $value }} concurrent executions (limit is 1000).
+            Consider increasing concurrency limits or optimizing function performance.
+          runbook_url: "https://docs.aws.amazon.com/lambda/latest/dg/concurrent-executions.html"
+
+      # Alert when Lambda functions are throttled
+      - alert: LambdaThrottling
+        expr: |
+          sum(rate(aws_lambda_throttles_sum[5m])) by (function_name) > 0
+        for: 2m
+        labels:
+          severity: warning
+          component: lambda
+          cloud: aws
+        annotations:
+          summary: "Lambda function {{ $labels.function_name }} is being throttled"
+          description: |
+            Lambda function {{ $labels.function_name }} is experiencing throttling.
+            {{ $value }} throttles per second detected.
+          runbook_url: "https://docs.aws.amazon.com/lambda/latest/dg/monitoring-functions.html#monitoring-throttles"
+
+      # Alert when Lambda duration exceeds threshold (p95 > 10 seconds)
+      - alert: LambdaHighDuration
+        expr: |
+          histogram_quantile(0.95, sum(rate(aws_lambda_duration_seconds_bucket[5m])) by (le, function_name)) > 10
+        for: 10m
+        labels:
+          severity: warning
+          component: lambda
+          cloud: aws
+        annotations:
+          summary: "Lambda function {{ $labels.function_name }} has high duration"
+          description: |
+            Lambda function {{ $labels.function_name }} p95 duration is {{ $value }}s.
+            Consider optimizing function performance or increasing memory allocation.
+
+  - name: aws_sqs_alerts
+    interval: 60s
+    rules:
+      # Alert when SQS queue depth exceeds 100 messages
+      - alert: SQSQueueBackingUp
+        expr: |
+          aws_sqs_approximate_number_of_messages_visible_average > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: sqs
+          cloud: aws
+        annotations:
+          summary: "SQS queue {{ $labels.queue_name }} backing up"
+          description: |
+            Queue {{ $labels.queue_name }} has {{ $value }} messages.
+            Consumer may not be processing messages fast enough.
+          runbook_url: "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-monitoring-using-cloudwatch.html"
+
+      # Alert when oldest message in queue exceeds 5 minutes
+      - alert: SQSMessageAgeHigh
+        expr: |
+          aws_sqs_approximate_age_of_oldest_message_maximum > 300
+        for: 5m
+        labels:
+          severity: critical
+          component: sqs
+          cloud: aws
+        annotations:
+          summary: "Old messages in queue {{ $labels.queue_name }}"
+          description: |
+            Oldest message in queue {{ $labels.queue_name }} is {{ $value }} seconds old.
+            Messages are not being processed in a timely manner.
+          runbook_url: "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-monitoring-using-cloudwatch.html"
+
+      # Alert when SQS queue depth exceeds 1000 messages (critical threshold)
+      - alert: SQSQueueCriticalBacklog
+        expr: |
+          aws_sqs_approximate_number_of_messages_visible_average > 1000
+        for: 5m
+        labels:
+          severity: critical
+          component: sqs
+          cloud: aws
+        annotations:
+          summary: "CRITICAL: SQS queue {{ $labels.queue_name }} has severe backlog"
+          description: |
+            Queue {{ $labels.queue_name }} has {{ $value }} messages.
+            Immediate attention required - consumer may be down or severely overloaded.
+
+  - name: aws_ecs_alerts
+    interval: 60s
+    rules:
+      # Alert when ECS service CPU utilization exceeds 90%
+      - alert: ECSHighCPU
+        expr: |
+          aws_ecs_cpu_utilization_average > 90
+        for: 10m
+        labels:
+          severity: warning
+          component: ecs
+          cloud: aws
+        annotations:
+          summary: "ECS service {{ $labels.service_name }} has high CPU usage"
+          description: |
+            ECS service {{ $labels.service_name }} CPU utilization is {{ $value }}%.
+            Consider scaling up or optimizing the service.
+
+      # Alert when ECS service memory utilization exceeds 95%
+      - alert: ECSHighMemory
+        expr: |
+          aws_ecs_memory_utilization_average > 95
+        for: 5m
+        labels:
+          severity: critical
+          component: ecs
+          cloud: aws
+        annotations:
+          summary: "ECS service {{ $labels.service_name }} has critical memory usage"
+          description: |
+            ECS service {{ $labels.service_name }} memory utilization is {{ $value }}%.
+            Service may be at risk of OOM (Out of Memory) errors.
+
+  - name: aws_apigateway_alerts
+    interval: 60s
+    rules:
+      # Alert when API Gateway 5xx error rate exceeds threshold
+      - alert: APIGateway5xxErrors
+        expr: |
+          sum(rate(aws_apigateway_5xx_error_sum[5m])) > 10
+        for: 5m
+        labels:
+          severity: critical
+          component: apigateway
+          cloud: aws
+        annotations:
+          summary: "API Gateway experiencing high 5xx error rate"
+          description: |
+            API Gateway has {{ $value }} 5xx errors per second.
+            Backend services may be failing or overloaded.
+          runbook_url: "https://docs.aws.amazon.com/apigateway/latest/developerguide/monitoring-cloudwatch.html"
+
+      # Alert when API Gateway latency exceeds threshold (p95 > 1 second)
+      - alert: APIGatewayHighLatency
+        expr: |
+          aws_apigateway_latency_average > 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: apigateway
+          cloud: aws
+        annotations:
+          summary: "API Gateway has high latency"
+          description: |
+            API Gateway average latency is {{ $value }}ms.
+            User experience may be degraded.
