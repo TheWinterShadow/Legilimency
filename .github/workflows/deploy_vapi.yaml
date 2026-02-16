@@ -1,0 +1,70 @@
+name: Deploy Vapi
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/vapi/**"
+      - ".github/workflows/deploy_vapi.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/vapi/**"
+      - ".github/workflows/deploy_vapi.yaml"
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r scripts/vapi/requirements.txt
+          pip install -r scripts/vapi/requirements-dev.txt
+
+      - name: Lint (Ruff)
+        run: ruff check scripts/vapi/
+
+      - name: Type check (mypy)
+        run: mypy scripts/vapi/ --ignore-missing-imports
+        continue-on-error: true
+
+      - name: Unit tests
+        run: |
+          cd scripts && pytest vapi/tests/ -v --cov=vapi --cov-omit="vapi/tests/*" --cov-report=term-missing --cov-fail-under=70
+
+  deploy-vapi:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r scripts/vapi/requirements.txt
+
+      - name: Dry run (PR)
+        if: github.event_name == 'pull_request'
+        run: cd scripts && python -m vapi.cli --dry-run
+        env:
+          VAPI_PRIVATE_KEY: ${{ secrets.VAPI_PRIVATE_KEY }}
+          BACKEND_WEBHOOK_URL: ${{ secrets.BACKEND_WEBHOOK_URL }}
+          PHONE_NUMBER_ID: ${{ vars.PHONE_NUMBER_ID }}
+
+      - name: Deploy (main)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: cd scripts && python -m vapi.cli
+        env:
+          VAPI_PRIVATE_KEY: ${{ secrets.VAPI_PRIVATE_KEY }}
+          BACKEND_WEBHOOK_URL: ${{ secrets.BACKEND_WEBHOOK_URL }}
+          PHONE_NUMBER_ID: ${{ vars.PHONE_NUMBER_ID }}

@@ -1,79 +1,25 @@
-# Environment and secrets - NEVER commit these
-.env
-.env.local
-.env.*.local
-*.env
-
-# GCP Service Account Keys - CRITICAL: Keep these out of git
-*-service-account*.json
-gcp-*.json
-*-key.json
-configs/gcp-service-account-key.json
-
-# AWS credentials
-.aws/
-credentials
-
-# Terraform state files - contain sensitive data
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
 terraform/*.tfstate
 terraform/*.tfstate.*
-terraform/**/*.tfstate
-terraform/**/*.tfstate.*
-terraform/.terraform/
-terraform/**/.terraform/
-*.tfvars
-!*.tfvars.example
+terraform/*.tfplan
+terraform/lambda_function.zip
+terraform/.terraform.tfstate.lock.info
 
-# Docker volumes and data
-vmagent-data/
-data/
-*.db
-*.sqlite
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+*.egg-info/
+.eggs/
 
-# Logs
-logs/
-*.log
-docker-compose.log
-
-# Backup files
-backups/
-*.backup
-*.bak
-
-# Editor and IDE
-.vscode/
+# IDE
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
-.DS_Store
-Thumbs.db
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-
-# Test output
-test-results/
-coverage/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Node modules (if any tooling is added)
-node_modules/
-
-# Python virtual environments (if any tooling is added)
-venv/
-.venv/
-__pycache__/
-*.pyc
-
-# Pre-commit
-.pre-commit-cache/

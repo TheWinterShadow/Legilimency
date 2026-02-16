@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars and fill in values. Do not commit terraform.tfvars.
+
+secret_token = "change-me-to-a-secure-random-string"
+# region     = "us-east-1"  # optional, defaults to us-east-1
